@@ -3,7 +3,7 @@
 
 Auto-Audit Pro automates the auditing of financial documents. It ingests PDF invoices, extracts structured data using OCR, and runs them against configurable business logic (e.g., "Flag transactions > $500" or "Detect Blacklisted Vendors").
 
-![App Screenshot](IMAGE_LINK_GOES_HERE)
+![App Screenshot](screenshot.png)
 
 ## 🚀 Key Features
 * **Batch Processing:** Upload 50+ invoices simultaneously for bulk auditing.
@@ -45,3 +45,4 @@ Auto-Audit Pro automates the auditing of financial documents. It ingests PDF inv
 
 ---
 *Created by [Arnav Hazari](https://www.linkedin.com/in/arnav-hazari)*
+
