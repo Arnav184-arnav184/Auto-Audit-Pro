@@ -6,11 +6,16 @@ import pandas as pd
 # --- PAGE CONFIGURATION ---
 st.set_page_config(page_title="Auto-Audit Pro", layout="wide", page_icon="🛡️")
 
+# --- SESSION STATE (The Fix for Clearing Files) ---
+if "uploader_key" not in st.session_state:
+    st.session_state.uploader_key = 0
+
 # --- SIDEBAR: CONFIGURATION ---
 st.sidebar.header("⚙️ Audit Configuration")
 
-# 1. Clear All Button
+# 1. Clear All Button (Now actually clears files!)
 if st.sidebar.button("🔄 Reset / Clear All"):
+    st.session_state.uploader_key += 1
     st.rerun()
 
 st.sidebar.markdown("---")
@@ -18,7 +23,7 @@ st.sidebar.markdown("Define your compliance thresholds below.")
 audit_threshold = st.sidebar.number_input("Max Transaction Limit ($)", min_value=0, value=500, step=50)
 vendor_blacklist = st.sidebar.text_area("Vendor Watchlist (One per line)", "Bad Wolf Corp\nBolton\nSuspicious LLC")
 
-# 2. Risk Score Legend (Updated to match logic)
+# 2. Risk Score Legend
 st.sidebar.markdown("---")
 st.sidebar.subheader("ℹ️ Risk Score Key")
 st.sidebar.info("""
@@ -33,7 +38,13 @@ st.markdown("""
 """)
 
 # --- MAIN APP: BATCH UPLOAD ---
-uploaded_files = st.file_uploader("Upload Invoices (PDF)", type=["pdf"], accept_multiple_files=True)
+# We use the session_state key here so it resets when the button is clicked
+uploaded_files = st.file_uploader(
+    "Upload Invoices (PDF)", 
+    type=["pdf"], 
+    accept_multiple_files=True,
+    key=f"uploader_{st.session_state.uploader_key}"
+)
 
 if uploaded_files:
     # Initialize Master List for the CSV
@@ -73,8 +84,7 @@ if uploaded_files:
                 if val_str:
                     amounts_found.append(float(val_str.replace(",", "")))
 
-        # Assumption: The largest number found is the "Total Amount".
-        # Limitation: This might fail if a line item is larger than the total (e.g. big discount).
+        # Assumption: Largest number is total
         total_amount = max(amounts_found) if amounts_found else 0.0
         total_value_audited += total_amount
         
@@ -98,20 +108,19 @@ if uploaded_files:
         # Rule 2: Blacklist Check (+100 pts)
         blacklist_list = [v.strip() for v in vendor_blacklist.split('\n') if v.strip()]
         for bad_vendor in blacklist_list:
-            # Word Boundary Check (\b)
             pattern = r"\b" + re.escape(bad_vendor) + r"\b"
             if re.search(pattern, extracted_text, re.IGNORECASE):
                 risk_score += 100
                 reasons.append(f"Vendor '{bad_vendor}' found on Watchlist")
 
-        # Determine Status Label (Fixed Logic)
+        # Determine Status Label
         if risk_score >= 100:
-            status = "High Risk"  # Must involve Blacklist
+            status = "High Risk"
             high_risk_count += 1
         elif risk_score >= 50:
-            status = "Medium Risk" # High Value or multiple errors
+            status = "Medium Risk"
         elif risk_score > 0:
-            status = "Medium Risk" # Extraction error
+            status = "Medium Risk"
         else:
             status = "Approved"
 
