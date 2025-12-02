@@ -6,11 +6,26 @@ import pandas as pd
 # --- PAGE CONFIGURATION ---
 st.set_page_config(page_title="Auto-Audit Pro", layout="wide", page_icon="🛡️")
 
-# --- SIDEBAR: RULE ENGINE ---
+# --- SIDEBAR: CONFIGURATION ---
 st.sidebar.header("⚙️ Audit Configuration")
+
+# 1. Clear All Button
+if st.sidebar.button("🔄 Reset / Clear All"):
+    st.rerun()
+
+st.sidebar.markdown("---")
 st.sidebar.markdown("Define your compliance thresholds below.")
 audit_threshold = st.sidebar.number_input("Max Transaction Limit ($)", min_value=0, value=500, step=50)
 vendor_blacklist = st.sidebar.text_area("Vendor Watchlist (One per line)", "Bad Wolf Corp\nBolton\nSuspicious LLC")
+
+# 2. Risk Score Legend (Updated to match logic)
+st.sidebar.markdown("---")
+st.sidebar.subheader("ℹ️ Risk Score Key")
+st.sidebar.info("""
+- **0-49 (Low):** Safe transaction.
+- **50-99 (Medium):** Exceeds spending limit OR extraction failed.
+- **100+ (High):** Blacklisted Vendor detected.
+""")
 
 st.title("🛡️ Auto-Audit Pro: Batch Compliance Engine")
 st.markdown("""
@@ -32,58 +47,71 @@ if uploaded_files:
     st.write("---")
     st.subheader(f"📂 Processing {len(uploaded_files)} Documents...")
     
-    # Progress Bar
     progress_bar = st.progress(0)
 
     # --- PROCESSING LOOP ---
     for i, file in enumerate(uploaded_files):
-        # 1. EXTRACT TEXT
-        with pdfplumber.open(file) as pdf:
-            extracted_text = ""
-            for page in pdf.pages:
-                extracted_text += page.extract_text() or ""
+        extracted_text = ""
+        error_msg = None
         
-        # 2. ANALYZE DATA (Using Regex)
-        # Look for "$" symbol OR "USD" text
+        # 3. ERROR HANDLING
+        try:
+            with pdfplumber.open(file) as pdf:
+                for page in pdf.pages:
+                    extracted_text += page.extract_text() or ""
+        except Exception as e:
+            error_msg = f"Error reading PDF: {str(e)}"
+            extracted_text = ""
+
+        # 4. ANALYZE DATA
         dollar_pattern = r"(?:\$|USD)\s*([0-9]{1,3}(?:,[0-9]{3})*(?:\.[0-9]{2})?|[0-9]+(?:\.[0-9]{2})?)|([0-9]{1,3}(?:,[0-9]{3})*(?:\.[0-9]{2})?)\s*USD"
         
         amounts_found = []
-        for match in re.findall(dollar_pattern, extracted_text):
-            val_str = match[0] if match[0] else match[1]
-            if val_str:
-                amounts_found.append(float(val_str.replace(",", "")))
+        if not error_msg:
+            for match in re.findall(dollar_pattern, extracted_text):
+                val_str = match[0] if match[0] else match[1]
+                if val_str:
+                    amounts_found.append(float(val_str.replace(",", "")))
 
-        # Logic: Guess Total
+        # Assumption: The largest number found is the "Total Amount".
+        # Limitation: This might fail if a line item is larger than the total (e.g. big discount).
         total_amount = max(amounts_found) if amounts_found else 0.0
         total_value_audited += total_amount
         
-        # 3. DETERMINE RISK LEVEL
+        # 5. DETERMINE RISK LEVEL
         risk_score = 0
         reasons = []
         
-        # Edge Case: Extraction Failed (No money found)
-        if total_amount == 0:
+        # Logic: Errors
+        if error_msg:
             risk_score += 25
-            reasons.append("Extraction Failed: No dollar amounts detected (Manual Review Required)")
+            reasons.append(f"⚠️ {error_msg}")
+        elif total_amount == 0:
+            risk_score += 25
+            reasons.append("Extraction Failed: No dollar amounts detected")
 
-        # Rule 1: High Value Check
+        # Rule 1: High Value Check (+50 pts)
         if total_amount > audit_threshold:
             risk_score += 50
             reasons.append(f"Amount (${total_amount:,.2f}) exceeds threshold")
         
-        # Rule 2: Blacklist Check
+        # Rule 2: Blacklist Check (+100 pts)
         blacklist_list = [v.strip() for v in vendor_blacklist.split('\n') if v.strip()]
         for bad_vendor in blacklist_list:
-            if bad_vendor.lower() in extracted_text.lower():
+            # Word Boundary Check (\b)
+            pattern = r"\b" + re.escape(bad_vendor) + r"\b"
+            if re.search(pattern, extracted_text, re.IGNORECASE):
                 risk_score += 100
                 reasons.append(f"Vendor '{bad_vendor}' found on Watchlist")
 
-        # Determine Status Label
-        if risk_score >= 50:
-            status = "High Risk"
+        # Determine Status Label (Fixed Logic)
+        if risk_score >= 100:
+            status = "High Risk"  # Must involve Blacklist
             high_risk_count += 1
+        elif risk_score >= 50:
+            status = "Medium Risk" # High Value or multiple errors
         elif risk_score > 0:
-            status = "Medium Risk"
+            status = "Medium Risk" # Extraction error
         else:
             status = "Approved"
 
@@ -96,7 +124,6 @@ if uploaded_files:
             "Issues": "; ".join(reasons)
         })
         
-        # Update Progress Bar
         progress_bar.progress((i + 1) / len(uploaded_files))
 
     # --- DASHBOARD SUMMARY ---
@@ -104,29 +131,22 @@ if uploaded_files:
     col1, col2, col3 = st.columns(3)
     col1.metric("📄 Files Processed", len(uploaded_files))
     col2.metric("💰 Total Value Audited", f"${total_value_audited:,.2f}")
-    col3.metric("🚩 Flagged Invoices", high_risk_count, delta_color="inverse")
+    col3.metric("🚩 High Risk Invoices", high_risk_count, delta_color="inverse")
 
     # --- DETAILED RESULTS TABLE ---
     st.subheader("📊 Detailed Audit Log")
     
     df = pd.DataFrame(master_audit_log)
     
-    # Styling Function: Adds BOLD text and Forces BLACK text color
     def highlight_risk(row):
-        # Common style for all rows: Bold and Black Text
         base_style = 'font-weight: bold; color: black; '
-        
         if row['Status'] == 'High Risk':
-            # Red Background
             return [base_style + 'background-color: #ffcccc'] * len(row)
         elif row['Status'] == 'Medium Risk':
-            # Yellow Background
             return [base_style + 'background-color: #fff3cd'] * len(row)
         else:
-            # Green Background
             return [base_style + 'background-color: #d4edda'] * len(row)
 
-    # Apply the style
     st.dataframe(df.style.apply(highlight_risk, axis=1))
 
     # --- MASTER CSV DOWNLOAD ---
